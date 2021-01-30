@@ -62,6 +62,7 @@ static FSInfo SPIFFSinfo;
 WiFiClient        wifiClient;
 ESP8266WebServer  server ( 80 );
 
+String    MAC = ""; //init macaddress
 uint32_t  waitLoop, noMeterWait, telegramCount, telegramErrors, waitForATOupdate;
 char      cMsg[100], fChar[10];
 char      APname[50], MAChex[13]; //n1n2n3n4n5n6\0
@@ -149,7 +150,11 @@ void setup() {
     delay(200);
   }
   digitalWrite(BUILTIN_LED, LED_OFF);
-  
+
+  // retrieve macaddress
+  MAC = WiFi.macAddress();
+  Serial.print("MAC = ");
+  Serial.println(MAC);
 
   server.on("/getActual.json", sendDataActual);
   server.on("/ReBoot", HTTP_POST, handleReBoot);
@@ -165,7 +170,7 @@ void setup() {
   server.begin();
   if (debug) Serial.println( "HTTP server started" );
   Serial.flush();
-  
+
   if (debug) Serial.println("\nSetup done.."); 
 } // setup()
 
@@ -210,8 +215,7 @@ void loop () {
     String urlGet = "/monitor/receiver.php"; //the path and file to send the data to
     
     // We now create and add parameters
-    String mac = "testmac";
-    urlGet += "?mac_address=" + mac  + "&current_data=%5B%7BVerbruikH%3D" + String(mEVLT) + "%2CVerbruikL%3D" + String(mEVHT) + "%2COpbrengst1%3D" + String(mEOLT) + "%2COpbrengst2%3D" + String(mEOHT) + "%2CActueelVerbruik%3D" + String(mEAV) + "%2CActueleOpbrengst%3D" + String(mEAT) + "%7D%5D";
+    urlGet += "?mac_address=" + MAC  + "&current_data=%5B%7BVerbruikH%3D" + String(mEVLT) + "%2CVerbruikL%3D" + String(mEVHT) + "%2COpbrengst1%3D" + String(mEOLT) + "%2COpbrengst2%3D" + String(mEOHT) + "%2CActueelVerbruik%3D" + String(mEAV) + "%2CActueleOpbrengst%3D" + String(mEAT) + "%7D%5D";
  
    Serial.print(">>> Connecting to host: ");
    Serial.println(hostGet);
