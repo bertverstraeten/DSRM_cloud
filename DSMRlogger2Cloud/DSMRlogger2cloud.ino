@@ -53,8 +53,8 @@
 
 #define HOSTNAME     "SmartReader"  // 
     
-#define LED_ON            HIGH
-#define LED_OFF           LOW
+#define LED_ON            LOW
+#define LED_OFF           HIGH
 void configModeCallback(WiFiManager *myWiFiManager);
 
 static FSInfo SPIFFSinfo;
@@ -68,7 +68,7 @@ char      cMsg[100], fChar[10];
 char      APname[50], MAChex[13]; //n1n2n3n4n5n6\0
 
 String    lastReset = ""; 
-bool      debug = true, OTAinProgress = false, Verbose = false, showRaw = false, SPIFFSmounted = false;
+bool      debug = false, OTAinProgress = false, Verbose = false, showRaw = false, SPIFFSmounted = false;
 int8_t    tries, showRawCount;
 uint32_t  nextSecond, unixTimestamp;
 uint64_t  upTimeSeconds;
