@@ -29,6 +29,8 @@
 //  part of ESP8266 Core https://github.com/esp8266/Arduino
 #include <ESP8266WiFi.h>        // version 1.0.0
 
+#include <ESP8266HTTPClient.h>
+
 //  part of ESP8266 Core https://github.com/esp8266/Arduino
 #include <ESP8266WebServer.h>   // Version 1.0.0
 
@@ -51,7 +53,9 @@
 
 #include "CRC16.h"
 
-#define HOSTNAME     "SmartReader"  // 
+#include <string.h>
+
+#define HOSTNAME     "Semafoor"  // 
     
 #define LED_ON            LOW
 #define LED_OFF           HIGH
@@ -77,6 +81,8 @@ uint16_t  WIFIreStartCount;
 String    jsonString;
 int       iterationsGet = 0; //returns number of server calls
 const bool outputOnSerial = true;
+char      token[16];
+
 
 #define MAXLINELENGTH 1024 // longest normal line is 47 char (+3 for \r\n\0)
 char telegram[MAXLINELENGTH];
@@ -103,7 +109,8 @@ double mEAT_temp = 0;  //Meter reading Electrics - Actual return
 // var for timing
 int send_wait_time = 10000; //wait time in between logs in millis
 int previous_millis = 0;
-
+int tokenRequestWaitTime = 20000; // wait time in between token requests
+int previous_millis_tokenRequest = 0;
 
 //===========================================================================================
 void setup() {
@@ -199,6 +206,14 @@ void LEDblink() {
   digitalWrite(BUILTIN_LED, LED_OFF);  
 }
 
+void LEDblink_short() {
+  for (int L=0; L < 5; L++) {
+    digitalWrite(BUILTIN_LED, !digitalRead(BUILTIN_LED));
+    delay(80);
+  }
+  digitalWrite(BUILTIN_LED, LED_OFF);  
+}
+
 //===========================================================================================
 void loop () {
 //===========================================================================================
@@ -207,60 +222,119 @@ void loop () {
   // run p1 reader here
   readTelegram();
 
-  // send data after waiting time has been passed
-  if (millis() - previous_millis > send_wait_time){
-    Serial.println("Sending data...");
-    const int httpGetPort = 80;
-    const char* hostGet = "kinekadees.be"; //host server 
-    String urlGet = "/monitor/receiver.php"; //the path and file to send the data to
-    
-    // We now create and add parameters
-    urlGet += "?mac_address=" + MAC  + "&current_data=%5B%7BVerbruikH%3D" + String(mEVLT) + "%2CVerbruikL%3D" + String(mEVHT) + "%2COpbrengst1%3D" + String(mEOLT) + "%2COpbrengst2%3D" + String(mEOHT) + "%2CActueelVerbruik%3D" + String(mEAV) + "%2CActueleOpbrengst%3D" + String(mEAT) + "%7D%5D";
- 
-   Serial.print(">>> Connecting to host: ");
-   Serial.println(hostGet);
-      
-    if (!wifiClient.connect(hostGet, httpGetPort)) {
-    Serial.print("Connection failed: ");
-    Serial.print(hostGet);
-    } else {
-        wifiClient.println("GET " + urlGet + " HTTP/1.1");
-        wifiClient.print("Host: ");
-        wifiClient.println(hostGet);
-        wifiClient.println("User-Agent: ESP8266/1.0");
-        wifiClient.println("Connection: close\r\n\r\n");
-          
-        unsigned long timeoutP = millis();
-        while (wifiClient.available() == 0) {
-            
-          if (millis() - timeoutP > 10000) {
-            Serial.print(">>> Client Timeout: ");
-            Serial.println(hostGet);
-            wifiClient.stop();
-            return;
-          } else{
-            // blink to indicate data has been sent
-            LEDblink();
-            Serial.println("URL sent: " + urlGet);
-          }
-        }
-     previous_millis = millis();
-     Serial.println("Wait for next log");
-  }
-  }  
+  // send data to server
+  mEVLT = 4569;
+  mEVHT = 1245;
+  mEOLT = 6384;
+  mEOHT = 10234;
+  mEAV = 700+500*sin(2*3.14159265/600000*millis())+800*sin(2*3.14159265/21600000*millis()); // for test purpose
+  mEAT = 200+50*sin(2*3.14159265/800000*millis())+80*sin(2*3.14159265/21600000*millis()); // for test purpose
+  sendDataServer();
+
+  // request new token
+  updateToken(); 
+   
 } // loop()
 
+//===========================================================================================
+void sendDataServer(){
+  
+    if (millis() - previous_millis > send_wait_time){
+      Serial.println("Sending data...");
 
-/*
-***************************************************************************  
-**  Program  : WiFiStuff, part of DSMRlogger2HTTP
-**  Version  : v0.7.8
-**
-**  Copyright (c) 2018 Willem Aandewiel
-**
-**  TERMS OF USE: MIT License. See bottom of file.                                                            
-***************************************************************************      
-*/
+      // convert and encrypt data
+      char char_mEVLT[16];
+      dtostrf(mEVLT,0,3,char_mEVLT);
+
+      char char_mEVHT[16];
+      dtostrf(mEVHT,0,3,char_mEVHT);
+
+      char char_mEOLT[16];
+      dtostrf(mEOLT,0,3,char_mEOLT);
+
+      char char_mEOHT[16];
+      dtostrf(mEOHT,0,3,char_mEOHT);
+    
+      char char_mEAV[16];
+      dtostrf(mEAV,0,3,char_mEAV);
+
+      char char_mEAT[16];
+      dtostrf(mEAT,0,3,char_mEAT);
+    
+      // We now create and add parameters
+      String urlGet = "mac_address=" + MAC  + "&current_data=%5B%7BVerbruikH%3D" + char_mEVLT + "%2CVerbruikL%3D" + char_mEVHT + "%2COpbrengst1%3D" + char_mEOLT + "%2COpbrengst2%3D" + char_mEOHT + "%2CActueelVerbruik%3D" + char_mEAV + "%2CActueleOpbrengst%3D" + char_mEAT + "%7D%5D";
+
+      // make post request
+      HTTPClient http; //Declare object of class HTTPClient
+    
+      http.begin("http://kinekadees.be/monitor/receiver.php"); //Specify request destination
+      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+      int httpCode = -1;
+      String payload = "";
+      while(httpCode == -1){
+        httpCode = http.POST(urlGet); //Send the request
+        payload = http.getString();  //Get the response payload
+        Serial.print("HTTP return code = ");Serial.println(httpCode); //Print HTTP return code
+        Serial.print("Data received = ");Serial.println(payload); //Print request response payload
+        delay(500);
+      }
+       
+      http.end();  //Close connection 
+      // verify if sending data was successful
+      if(httpCode != -1){
+        previous_millis = millis();
+        LEDblink();  
+      }        
+  } 
+}
+
+//===========================================================================================
+void updateToken() {
+
+   if (millis() - previous_millis_tokenRequest > tokenRequestWaitTime){
+    
+    // make post request
+    HTTPClient http; //Declare object of class HTTPClient
+    
+    http.begin("http://kinekadees.be/monitor/receiver.php"); //Specify request destination
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+    char buf[30];
+    strcpy(buf,"tokenRequest=");
+
+    int httpReceipt = -1;
+    String paycheck = "";
+    while(httpReceipt == -1){
+      httpReceipt = http.POST(buf); //Send the request
+      paycheck = http.getString();  //Get the response payload
+      Serial.print("HTTP return code = ");Serial.println(httpReceipt); //Print HTTP return code
+      Serial.print("Data received = ");Serial.println(paycheck); //Print request response payload
+      delay(500);
+      }
+       
+      http.end();  //Close connection 
+      // verify if sending data was successful
+      if(httpReceipt != -1){
+        previous_millis_tokenRequest = millis();
+        LEDblink_short();  
+      }
+    http.end();  //Close connection
+   }
+}
+//===========================================================================================
+//===========================================================================================
+char* XORENC(char* in, char* key){
+  // Brad @ pingturtle.com
+  int insize = strlen(in);
+  int keysize = strlen(key);
+  for(int x=0; x<insize; x++){
+    for(int i=0; i<keysize;i++){
+      in[x]=(in[x]^key[i])^(x*i);
+    }
+  }
+  return in;
+}
 
 //===========================================================================================
 //gets called when WiFiManager enters configuration mode
@@ -287,7 +361,7 @@ byte    mac[6];
 
     digitalWrite(BUILTIN_LED, LED_ON);  
     WiFi.macAddress(mac);
-    sprintf(APname, "%s-%02x-192.168.3.1", HOSTNAME, mac[5]);
+    sprintf(APname, "%s-%02x", HOSTNAME, mac[5]);
     //WiFiManager
     //Local intialization. Once its business is done, there is no need to keep it around
     WiFiManager wifiManager;
@@ -367,16 +441,6 @@ byte    mac[6];
 
 }   // setupWiFi()
 
-/*
-***************************************************************************  
-**  Program  : SPIFFSstuff, part of DSMRlogger2HTTP
-**  Version  : v0.7.7
-**
-**  Copyright (c) 2019 Willem Aandewiel
-**
-**  TERMS OF USE: MIT License. See bottom of file.                                                            
-***************************************************************************      
-*/
 
 //===========================================================================================
 int32_t freeSpace() {
@@ -413,7 +477,6 @@ void listSPIFFS() {
   TelnetStream.printf("     SPIFFS block Size [%ld]bytes\r\n", SPIFFSinfo.blockSize);
   TelnetStream.printf("      SPIFFS page Size [%ld]bytes\r\n", SPIFFSinfo.pageSize);
   TelnetStream.printf(" SPIFFS max.Open Files [%ld]\r\n\n", SPIFFSinfo.maxOpenFiles);
-
 
 } // listSPIFFS()
 
