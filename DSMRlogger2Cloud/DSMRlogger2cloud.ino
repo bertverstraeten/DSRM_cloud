@@ -26,6 +26,9 @@
     - Port: "ESP01-DSMR at <-- IP address -->"
 */
 
+// part of ESP8266 Core
+#include <ESP8266httpUpdate.h>
+
 //  part of ESP8266 Core https://github.com/esp8266/Arduino
 #include <ESP8266WiFi.h>        // version 1.0.0
 
@@ -62,6 +65,8 @@
 void configModeCallback(WiFiManager *myWiFiManager);
 
 static FSInfo SPIFFSinfo;
+
+String  FWV = "0.0.0";
 
 WiFiClient        wifiClient;
 ESP8266WebServer  server ( 80 );
@@ -158,6 +163,10 @@ void setup() {
   }
   digitalWrite(BUILTIN_LED, LED_OFF);
 
+  // communicate firmware version
+  Serial.print("Firmware version = ");
+  Serial.println(FWV);
+  
   // retrieve macaddress
   MAC = WiFi.macAddress();
   Serial.print("MAC = ");
@@ -233,7 +242,17 @@ void loop () {
 
   // request new token
   updateToken(); 
-   
+
+  // update firmware
+  Serial.println("Counting down for update...");
+  int current_millis = millis();
+  while(millis() < current_millis + 10000){
+    Serial.println(millis()/1000);
+    delay(1000);
+  }
+  Serial.println("Updating...");
+  ESPhttpUpdate.update("192.168.5.170", 80, "//192.168.5.170/Users/Gebruiker/Documents/DSMRlogger_binary/DSMRlogger.bin");
+  Serial.println("Update failed!"); 
 } // loop()
 
 //===========================================================================================
