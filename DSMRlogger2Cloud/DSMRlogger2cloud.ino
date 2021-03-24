@@ -26,10 +26,17 @@
     - Port: "ESP01-DSMR at <-- IP address -->"
 */
 
+// part of ESP8266 Core
+#include <ESP8266httpUpdate.h>
+
+#include <Arduino.h>
+
 //  part of ESP8266 Core https://github.com/esp8266/Arduino
 #include <ESP8266WiFi.h>        // version 1.0.0
 
 #include <ESP8266HTTPClient.h>
+
+#include <WiFiClientSecure.h>
 
 //  part of ESP8266 Core https://github.com/esp8266/Arduino
 #include <ESP8266WebServer.h>   // Version 1.0.0
@@ -63,6 +70,8 @@ void configModeCallback(WiFiManager *myWiFiManager);
 
 static FSInfo SPIFFSinfo;
 
+String  FWV = "0.0.0";
+
 WiFiClient        wifiClient;
 ESP8266WebServer  server ( 80 );
 
@@ -83,12 +92,11 @@ int       iterationsGet = 0; //returns number of server calls
 const bool outputOnSerial = true;
 char      token[16];
 
-
 #define MAXLINELENGTH 1024 // longest normal line is 47 char (+3 for \r\n\0)
 char telegram[MAXLINELENGTH];
 
 #define SERIAL_RX  14 // pin for SoftwareSerial RX
-SoftwareSerial mySerial(SERIAL_RX, -1, false, MAXLINELENGTH); // (RX, TX. inverted, buffer)
+SoftwareSerial mySerial(SERIAL_RX, -1, false); // (RX, TX. inverted, buffer)
 
 unsigned int currentCRC=0;
 
@@ -111,6 +119,42 @@ int send_wait_time = 10000; //wait time in between logs in millis
 int previous_millis = 0;
 int tokenRequestWaitTime = 20000; // wait time in between token requests
 int previous_millis_tokenRequest = 0;
+int updateRequestWaitTime = 24*60*60*1000; // wait time in between token requests
+int previous_millis_updateRequest = 0;
+
+// var for firmware updates
+// #define URL_fw_Version "/programmer131/otaFiles/master/version.txt"
+#define URL_fw_Bin "http://kinekadees.be/monitor/devices/minilogger/bin/update.bin"
+const char* hostUpdate = "https://kinekadees.be";
+const int httpsPort = 80;
+
+// DigiCert High Assurance EV Root CA
+const char trustRoot[] PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDxTCCAq2gAwIBAgIQAqxcJmoLQJuPC3nyrkYldzANBgkqhkiG9w0BAQUFADBs
+MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
+d3cuZGlnaWNlcnQuY29tMSswKQYDVQQDEyJEaWdpQ2VydCBIaWdoIEFzc3VyYW5j
+ZSBFViBSb290IENBMB4XDTA2MTExMDAwMDAwMFoXDTMxMTExMDAwMDAwMFowbDEL
+MAkGA1UEBhMCVVMxFTATBgNVBAoTDERpZ2lDZXJ0IEluYzEZMBcGA1UECxMQd3d3
+LmRpZ2ljZXJ0LmNvbTErMCkGA1UEAxMiRGlnaUNlcnQgSGlnaCBBc3N1cmFuY2Ug
+RVYgUm9vdCBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMbM5XPm
++9S75S0tMqbf5YE/yc0lSbZxKsPVlDRnogocsF9ppkCxxLeyj9CYpKlBWTrT3JTW
+PNt0OKRKzE0lgvdKpVMSOO7zSW1xkX5jtqumX8OkhPhPYlG++MXs2ziS4wblCJEM
+xChBVfvLWokVfnHoNb9Ncgk9vjo4UFt3MRuNs8ckRZqnrG0AFFoEt7oT61EKmEFB
+Ik5lYYeBQVCmeVyJ3hlKV9Uu5l0cUyx+mM0aBhakaHPQNAQTXKFx01p8VdteZOE3
+hzBWBOURtCmAEvF5OYiiAhF8J2a3iLd48soKqDirCmTCv2ZdlYTBoSUeh10aUAsg
+EsxBu24LUTi4S8sCAwEAAaNjMGEwDgYDVR0PAQH/BAQDAgGGMA8GA1UdEwEB/wQF
+MAMBAf8wHQYDVR0OBBYEFLE+w2kD+L9HAdSYJhoIAu9jZCvDMB8GA1UdIwQYMBaA
+FLE+w2kD+L9HAdSYJhoIAu9jZCvDMA0GCSqGSIb3DQEBBQUAA4IBAQAcGgaX3Nec
+nzyIZgYIVyHbIUf4KmeqvxgydkAQV8GK83rZEWWONfqe/EW1ntlMMUu4kehDLI6z
+eM7b41N5cdblIZQB2lWHmiRk9opmzN6cN82oNLFpmyPInngiK3BD41VHMWEZ71jF
+hS9OMPagMRYjyOfiZRYzy78aG6A9+MpeizGLYAiJLQwGXFK3xPkKmNEVX58Svnw2
+Yzi9RKR/5CYrCsSXaQ3pjOLAEFe4yHYSkVXySGnYvCoCWw9E1CAx2/S6cCZdkGCe
+vEsXCS+0yx5DaMkHJ8HSXPfqIbloEpw8nL+e/IBcm2PN7EeqJSdnoDfzAIJ9VNep
++OkuE6N36B9K
+-----END CERTIFICATE-----
+)EOF";
+X509List cert(trustRoot);
 
 //===========================================================================================
 void setup() {
@@ -158,6 +202,10 @@ void setup() {
   }
   digitalWrite(BUILTIN_LED, LED_OFF);
 
+  // communicate firmware version
+  Serial.print("Firmware version = ");
+  Serial.println(FWV);
+  
   // retrieve macaddress
   MAC = WiFi.macAddress();
   Serial.print("MAC = ");
@@ -180,6 +228,38 @@ void setup() {
 
   if (debug) Serial.println("\nSetup done.."); 
 } // setup()
+
+//=================================================================
+void FirmwareUpdateOTA(){
+
+ if (millis() - previous_millis_updateRequest > updateRequestWaitTime){ 
+  
+
+    Serial.print("Update URL = ");
+    Serial.println(URL_fw_Bin);
+
+    WiFiClient client;
+    t_httpUpdate_return ret = ESPhttpUpdate.update(client,URL_fw_Bin);
+
+    switch(ret) {
+        case HTTP_UPDATE_FAILED:
+            Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+            Serial.println("");
+            break;
+
+        case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("HTTP_UPDATE_NO_UPDATES");
+            break;
+
+        case HTTP_UPDATE_OK:
+            Serial.println("HTTP_UPDATE_OK");
+            break;
+    }
+    
+    // update timers
+    previous_millis_updateRequest = millis();
+ }
+}
 
 void sendDataActual() {
 //=======================================================================
@@ -233,7 +313,10 @@ void loop () {
 
   // request new token
   updateToken(); 
-   
+
+  // update firmware
+  FirmwareUpdateOTA();
+
 } // loop()
 
 //===========================================================================================
